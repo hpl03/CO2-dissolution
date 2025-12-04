@@ -1,4 +1,4 @@
-2025.12.1 海洋环境下CO2气泡溶解上升的文献调研：
+                      2025.12.1 海洋环境下CO2气泡溶解上升的文献调研：
 1.CO₂在海水中的应用背景：碳封存时管道受损导致CO₂在浅海处泄漏，以气泡的形式溶解上升。CO₂被运送到深海处，以液滴的形式溶解上升，最后完全溶解到海水中。
 2.在模拟实验研究中， CO₂气泡和液滴均完全溶解，在调研的实验研究中，也给出了预测的完全溶解的结果
 3.没有找到直接说明CO2气泡在海洋环境下溶解上升时的气泡轨迹，给出了化工背景下CO2气泡溶解上升时的气泡轨迹变化：随着CO2气泡的不断上升，轨迹由螺旋波动明显过渡到波动幅度显著减小。
@@ -8,7 +8,7 @@
   由1）和2）来判断CO2在海洋环境下溶解上升时轨迹变化对应的Re、Bo
   3）空气气泡上升时轨迹变化对应的Re、Bo的范围
 
-2025.12.2 不溶解气泡上升时传质代码的阅读
+                    2025.12.2 不溶解气泡上升时传质代码的阅读
 1.亨利常数
   亨利常数He决定了气体在液体中的溶解度。它描述了气体在液体界面处的平衡浓度 与 该气体压力之间的关系。即：
   C=p/H,其中​C：溶解到水中的气体浓度（mol/m³），p：气体分压（Pa），H：亨利常数
@@ -28,7 +28,7 @@
   三元运算符：检查 f[] 的值。如果它是真（非零），则将 c_l[] 设为 0.0；否则，将 c_l[] 设为 He 乘以 rho2 的积。
   即if（f[]!=0）cl[]=0;else cl[]=He*rho2;
 
-2025.12.3 不溶解气泡上升时传质代码的阅读
+                  2025.12.3 不溶解气泡上升时传质代码的阅读
 1.ci += 1.0*(1. - f[])*dv();//solute mass in bubble inside where solute concentration is 1.0
     co += c_l[]*f[]*dv();   //solute mass in water where solute concentration is cl
     计算气泡内ci和气泡外co的溶质质量，其中气泡内溶质浓度使用1，气泡外溶质浓度使用cl
@@ -69,4 +69,24 @@ Delta 是当前网格的网格间距（可能经过 AMR 自适应加密）。
 Henry 定律说的就是这个平衡状态下，气液两侧浓度满足一个比例关系：
 气相侧的浓度 × Henry 常数 = 液相侧的浓度  （此时He 是无量纲的分配系数 大约90%用这种方式）或者 液相侧浓度=Henry常数 * 气相分压（此时He 有量纲（mol/(L·atm)），常见于化学工程）
 9.double cc_int = He; 
-  
+                  2025.12.4  不溶解气泡上升时传质代码的阅读 
+1. double grad = dirichlet_gradient(point, c_l, f, n, p, cc_int, &coef);  计算沿法向方向的浓度梯度
+2.mass_flux += D1 * grad * area_local;
+  根据菲克定律，计算扩散通量：假设从高浓度区域往低浓度流的通量大小与浓度梯度（空间导数）成正比，通过这个假设，菲克第一定律把扩散通量与浓度联系起来。在一维空间下的菲克定律如下：
+      J = − D *（∂ ϕ/ ∂ x）
+  然后计算：扩散的质量流量（从界面扩散出去的总质量通量）=扩散通量*界面面积
+3.double kl =  mass_flux / area / (ci*He / vb - co / statsf(f).sum);  //calculate the mass transfer coefficient
+  double kl2 = mass_flux / area / He;         //Simplify calculations 
+  double sh = kl * 2.0 * bubble_radius / D1;  //sherwood number L=2R
+  double sh2 = kl2 * 2.0 * bubble_radius / D1;
+  1）基于 双膜理论 (Two-Film Theory) 或标准的传质公式来反推传质系数kL
+  公式的物理核心是：通量 = 传质系数 × 浓度驱动力
+  即：      J=kL×ΔC
+  由此变形得到：       kL=J/ΔC
+  分母 (ci*He / vb - co / statsf(f).sum) 代表的是浓度差，即传质的驱动力。通常写作(C∗−Cbulk)。
+  第一项：界面处的平衡浓度 (C∗或  Csat)    (ci / vb) * He: 根据亨利定律，气相浓度乘以亨利常数，等于气液界面处液侧的平衡饱和浓度。
+  第二项：主体液相浓度 (Cbulk或 C∞)   co / statsf(f).sum: 外部流体的平均体相浓度
+  2）是一个更简单的替代公式：kl=JH   界面浓度 ≈H（液相界面浓度只由亨利定律决定）
+    远场浓度可忽略 C∞≈0
+  kl2 是一种 近似（simplified）界面法。
+  使用 Sherwood 数定义：Sh=kl*L/D 对于气泡：特征长度：L=2R（直径）
