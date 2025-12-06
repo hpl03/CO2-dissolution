@@ -97,4 +97,4 @@ Henry 定律说的就是这个平衡状态下，气液两侧浓度满足一个�
     squares ("u.x", spread = -1, linear = true, map = cool_warm); 绘制水平速度 u.x 的分布
     draw_vof ("f");
 5.event阅读
-相比于之前看的bubble.c的event，该event多了event metric
+  相比于之前看的bubble.c的event，该bubble.c增加和修改了一些event如（增加了event metric，一些event tracer_advection），详见event_read
