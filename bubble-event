@@ -1,4 +1,4 @@
- src/axi.h:151
+多了 src/axi.h:151
 event metric (i = 0) {
  if (is_constant(cm)) {
     scalar * l = list_copy (all);
@@ -35,25 +35,30 @@ event metric (i = 0) {
 建立轴对称（axisymmetric）坐标系下的度量（metric），即将普通的笛卡尔网格“伪装”成轴对称柱坐标 (r,z)，其中 y 代表径向坐标 r。
 这是 Basilisk 中实现轴对称模拟的经典写法（不开启真正的柱坐标，而是通过修改面通量和体积分的权重来模拟 2πr 的效果）。
 
-./dissolve/embed-dissolve.h:906
+
+
+
+
+
+多了./dissolve/embed-dissolve.h:906
 event metric (i = 0)
 {
   if (is_constant (fm.x)) {
     foreach_dimension()
       assert (constant (fm.x) == 1.);
-    fm = fs;
+    fm = fs;        //检查 fm 是否是常数，如果是，则替换为 fs
   }
   foreach_face()
     fs.x[] = 1.;
   if (is_constant (cm)) {
     assert (constant (cm) == 1.);
-    cm = cs;
+    cm = cs;           //对体积分数场 cm / cs 做同样处理
   }
   foreach()
     cs[] = 1.;
 
 #if TREE
-  cs.refine = embed_fraction_refine;
+  cs.refine = embed_fraction_refine;   //设置细化和延拓方法
 
   /**
   For prolongation we cannot use the same function since the surface
@@ -75,3 +80,299 @@ event metric (i = 0)
 #endif
   restriction ({cs, fs});
 }
+这是 Basilisk 中用于嵌入固体几何（embedded boundaries）初始化 metric、体积分数、面分数，以及设置其细化/延拓/限制规则的初始化代码。
+cm，fm：网格自己的 metric（几何信息）
+Basilisk 用 cm 和 fm 来表示：在 非规则网格 / 曲线坐标 中cell 的真实体积和 face 的真实面积  
+  例如在极坐标网格：
+  cell 面积 ≠ dx*dy
+  face 长度 ≠ dx 或 dy
+cs，fs：描述固体嵌入几何（embedded boundaries）这是设置固体的“几何描述”：
+  cs[] = cell fraction（单元流体占比）
+  1 = 全流体
+  0 = 全固体
+  0–1 = 部分被固体切割（cut cell）
+
+  fs.x[] = face fraction（面上流体占比）
+  控制流体能通过哪部分的面
+
+
+
+
+
+多了./dissolve/dissolve.h:43
+event defaults (i = 0)
+{
+    f.tracers = list_append(f.tracers, c_l);  把液相浓度场 c_l（liquid concentration，比如溶质、温度、蒸气质量分数等）加入到f 的 tracer 列表。把 c_l 这个溶解标量加入流体运输方程中
+    c_l.gradient = minmod2;   
+    c_l.third = true;                  设置 cl 的重构和斜率限制器  c_l.gradient = minmod2;使用 minmod2 斜率限制器，用于防止梯度振荡、过冲/欠冲。c_l.third = true;允许三阶重构，用于提高 tracer 在界面附近的精度。
+    for (scalar c in interfaces)
+    {
+        c.refine = c.prolongation = fraction_refine;
+        c.dirty = true;
+        scalar *tracers = c.tracers;
+        for (scalar t in tracers)
+        {
+            t.restriction = restriction_volume_average;
+            t.refine = t.prolongation = vof_concentration_refine;
+            t.dirty = true;
+            t.c = c;
+        }
+    }
+
+    D_l.x.refine = refine_face;
+    foreach_dimension()
+    {
+        D_l.x.prolongation = refine_embed_face_x;
+    }
+
+    for (scalar s in{vol_l, resdif})
+    {
+        s.restriction = restriction_embed_linear;
+        s.refine = s.prolongation = refine_embed_linear;
+        s.depends = list_add(s.depends, cs);
+    }
+
+#if AXI
+    vol_l.refine = vol_l.prolongation = refine_cm_axi;
+#endif
+}
+配置 AMR 如何处理界面、tracer、扩散系数、几何相关量。
+
+
+
+
+修改了centered.h
+event defaults (i = 0)
+{
+
+  /**
+  We reset the multigrid parameters to their default values. */
+  
+  mgp = (mgstats){0};
+  mgpf = (mgstats){0};
+  mgu = (mgstats){0};  
+  
+  CFL = 0.8;
+
+  /**
+  The pressures are never dumped. */
+
+  p.nodump = pf.nodump = true;
+  
+  /**
+  The default density field is set to unity (times the metric and the
+  solid factors). */
+
+  if (alpha.x.i == unityf.x.i) {
+    alpha = fm;
+    rho = cm;
+  }
+  else if (!is_constant(alpha.x)) {
+    face vector alphav = alpha;
+    foreach_face()
+      alphav.x[] = fm.x[];
+  }
+
+  /**
+  On trees, refinement of the face-centered velocity field needs to
+  preserve the divergence-free condition. */
+
+#if TREE
+  uf.x.refine = refine_face_solenoidal;
+
+  /**
+  When using [embedded boundaries](/src/embed.h), the restriction and
+  prolongation operators need to take the boundary into account. */
+
+#if EMBED
+  uf.x.refine = refine_face;
+  foreach_dimension()
+    uf.x.prolongation = refine_embed_face_x;
+  for (scalar s in {p, pf, u, g}) {
+    s.restriction = restriction_embed_linear;
+    s.refine = s.prolongation = refine_embed_linear;
+    s.depends = list_add (s.depends, cs);
+  }
+  for (scalar s in {p, pf})
+    s.embed_gradient = pressure_embed_gradient;
+#endif // EMBED
+#endif // TREE
+
+  /**
+  We set the dimensions of the velocity field. */
+
+  foreach()
+    foreach_dimension()
+      dimensional (u.x[] == Delta/t);
+}
+1  重置多重网格状态  保证每次新模拟从干净状态开始
+2  设 CFL = 0.8  稳定、安全
+3  禁止输出压力场  减少垃圾数据
+4  自动把 alpha = fm, rho = cm  实现变密度 + 嵌入边界
+5  在树网格上保证速度细化后仍无散  投影法不炸
+6  在嵌入边界下改用专用细化/插值方法   几何精确
+7  所有核心场用 embed-linear + 依赖 cs  固体内部物理量正确为0
+8  设置速度的物理维度  单位系统正确
+
+
+
+ ./dissolve/embed-dissolve.h:949
+event defaults (i = 0 ) {
+  display ("draw_vof (c = 'cs', s = 'fs', filled = -1, "
+	   "fc = {0.5,0.5,0.5}, order = 2);");
+}
+在模拟一开始（i = 0）时自动绘制嵌入边界的几何形状
+
+
+
+centered-dissolve.h:190
+event default_display (i = 0)
+  display ("squares (color = 'u.x', spread = -1);");
+在模拟的第一步（i=0），绘制整个速度场的 x 分量的彩色平滑方块图
+
+
+
+dissolve.h:80
+event init (t = 0)
+{
+    restoreNoSolid();
+}
+void restoreNoSolid()
+{
+    // the embed model is only activated for the diffusion process
+    foreach ()
+    {
+        cs[] = 1.0;   强制所有网格变成“没有固体”，也就是纯流体。
+    }
+
+    foreach_face()
+    {
+        fs.x[] = 1.0;  所有面都没有固体阻挡，流体可以自由通过。
+    }
+
+#if AXI
+    cm_update(cm, cs, fs);
+    fm_update(fm, cs, fs);  cm_update 和 fm_update 会把 metric 设为“没有固体的普通流体网格”
+#endif
+    restriction({cs, fs, cm, fm});
+}  
+
+
+
+vof dissolve.h:86
+event vof(i++)
+{
+    foreach ()
+    {
+        f[] = clamp(f[], 0., 1.);
+        f[] = (f[] > F_ERR) ? f[] : 0.;
+        c_l[] *= f[];
+    }
+}
+消除数值误差，防止气泡内出现cl
+
+
+vof  vof.h:380
+event vof (i++)
+  vof_advection (interfaces, i)；对两相流中的体积分数 f 进行数值对流（advection），从而更新气液界面的位置。求的是f
+
+
+
+vof  centered-dissolve.h:237
+event vof (i++,last); 调用vof 
+
+
+tracer_advection dissolve.h:98
+event tracer_advection(i++)
+{
+    foreach ()
+    {
+        f[] = clamp(f[], 0., 1.);
+        f[] = (f[] > F_ERR) ? f[] : 0.;
+        c_l[] = f[] ? c_l[] / f[] : He * 1.;
+    }
+}
+将 c_l 从“单元平均值”转换成“纯液体浓度”， 在气相中给出 Henry 平衡值作为边界条件
+
+
+
+tracer_advection   two-phase-generic.h:50
+event tracer_advection (i++)
+{
+  
+  /**
+  When using smearing of the density jump, we initialise *sf* with the    //在一些两相流模拟中，为了避免由于密度或粘度跳跃（discontinuous jump）导致的数值震荡
+  vertex-average of *f*. */     //我们不直接使用 f（体积分数），而是构造一个平滑的版本 sf
+
+#ifndef sf
+#if dimension <= 2
+  foreach()
+    sf[] = (4.*f[] + 
+	    2.*(f[0,1] + f[0,-1] + f[1,0] + f[-1,0]) +
+	    f[-1,-1] + f[1,-1] + f[1,1] + f[-1,1])/16.;
+#else // dimension == 3
+  foreach()
+    sf[] = (8.*f[] +
+	    4.*(f[-1] + f[1] + f[0,1] + f[0,-1] + f[0,0,1] + f[0,0,-1]) +
+	    2.*(f[-1,1] + f[-1,0,1] + f[-1,0,-1] + f[-1,-1] + 
+		f[0,1,1] + f[0,1,-1] + f[0,-1,1] + f[0,-1,-1] +
+		f[1,1] + f[1,0,1] + f[1,-1] + f[1,0,-1]) +
+	    f[1,-1,1] + f[-1,1,1] + f[-1,1,-1] + f[1,1,1] +
+	    f[1,1,-1] + f[-1,-1,-1] + f[1,-1,-1] + f[-1,-1,1])/64.;
+#endif
+#endif // !sf
+
+#if TREE
+  sf.prolongation = refine_bilinear;   //指定 sf 在网格加密时使用双线性插值（平滑过渡)
+  sf.dirty = true; // boundary conditions need to be updated  //标记sf的边界条件需要更新。 通过以上两步确保在 AMR 细化/粗化时，平滑场 sf 的插值保持连续、无跳变。
+#endif
+}
+只更新（或构造）一个“平滑的体积分数场” sf，为了让 tracer 的 advection 使用更平滑的界面，避免数值振荡。
+
+
+
+tracer_advection   centered-dissolve.h:238
+event tracer_advection (i++,last);   对 tracers 列表中的每一个标量（如 c_l），求流体速度 u 导致的“对流”
+
+
+tracer_diffusion   dissolve.h:110
+event tracer_diffusion(i++)
+{
+    foreach ()
+        cs[] = f[];
+    face_fraction_C(cs, fs);
+    boundary((scalar *){cs, fs});       生成液相体积分数 cs 和液相面分数 fs
+#if AXI
+    cm_update(cm, cs, fs);
+    fm_update(fm, cs, fs);
+#endif
+    restriction({cs, fs, cm, fm});        轴对称修正：更新体积 cm 和面积 fm（如果是 AXI）
+
+
+    foreach_face()
+      D_l.x[] = D1*fm.x[];          设置液相扩散系数 D_l（只在液体区域有效）
+    
+    foreach()
+    {
+      vol_l[] = cm[];
+      resdif[] = 0.0;
+    }
+    boundary((scalar *){D_l, vol_l, resdif});      设置体积项 vol_l 为液体结构
+
+
+    mgstats mgc1 = diffusion(c_l, dt, D_l, r = resdif, theta = vol_l);    求解溶质扩散方程，更新 CO₂ 液相浓度 c_l
+
+    //finally we eliminate the solid fractions
+    restoreNoSolid(); 
+
+    foreach()
+    {
+        c[] = 1.0 * (1.0 - f[]) + c_l[] * f[];         将 c_l 与泡内浓度组合得到全场浓度 c
+    }
+}
+
+
+
+
+tracer_diffusion  centered-dissolve.h:239
+event tracer_diffusion (i++,last);    调用tracer_diffusion 
