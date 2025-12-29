@@ -98,3 +98,8 @@ Henry 定律说的就是这个平衡状态下，气液两侧浓度满足一个�
     draw_vof ("f");
 5.event阅读
   相比于之前看的bubble.c的event，该bubble.c增加和修改了一些event如（增加了event metric，一些event tracer_advection），详见event_read
+
+
+                    2025.12.29
+1.气泡的前后对称性，指的是：以气泡的运动方向为轴，把气泡沿该轴“前后对折”，几何形状、界面曲率、压力与流场分布完全相同。
+  前： 气泡上方（运动方向上的迎流面）后： 气泡下方（尾部、wake 形成处）
